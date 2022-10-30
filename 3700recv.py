@@ -20,12 +20,14 @@ class Receiver:
         sys.stderr.flush()
 
     def run(self):
+        expected_seqnum = 1
+        seen = []
         while True:
             socks = select.select([self.socket], [], [])[0]
             for conn in socks:
                 data, addr = conn.recvfrom(65535)
 
-                # Grab the remote host/port if we don't alreadt have it
+                # Grab the remote host/port if we don't already have it
                 if self.remote_host is None:
                     self.remote_host = addr[0]
                     self.remote_port = addr[1]
@@ -33,13 +35,26 @@ class Receiver:
                 msg = json.loads(data.decode('utf-8'))
                 self.log("Received data message %s" % msg)
 
-                # Print out the data to stdout
-                print(msg["data"], end='', flush=True)
+                seqnum = msg["seqnum"] # get packet seq number
 
-                # Always send back an ack
-                self.send({ "type": "ack" })
+                # if next seq number
+                if seqnum == expected_seqnum:
+                    # Print out the data to stdout
+                    print(msg["data"], end='', flush=True)
+                    self.send({ "type": "ack", "seqnum": seqnum })
+                    
+                    seen.append(seqnum)
+                    expected_seqnum += 1
 
+                # if duplicate seq number 
+                elif seqnum in seen:
+                    strtoprint = 'got duplicate packet ' + str(seqnum) + "\n"
+                    self.log(strtoprint)
 
+                # if out of order
+                else:
+                    self.log('nothing')
+                    # TODO
         return
 
 if __name__ == "__main__":

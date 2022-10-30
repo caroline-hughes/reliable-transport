@@ -1,0 +1,40 @@
+usage:
+
+$ ./3700send <recv_host> <recv_port>
+
+recv_host (Required) The domain name (e.g., “foo.com”) or IP address (e.g., “1.2.3.4”) of the remote host
+recv_port (Required) The UDP port of the remote host.
+
+our 3700send script 
+-opens a UDP socket
+-sends packets to the given IP address on the given port.
+-the packet data is supplied in STDIN. 
+ - assume that the 3700recv program is running on the remote host/port
+-any printing is done thru stderr
+
+
+usage:
+
+$ ./3700recv
+-on startup, the receiver must bind to a UDP port
+  - first thing that it prints out to STDERR must be the message: Bound to port <port>
+-prints out the data that it receives, and only the data it receives, from the sender to STDOUT
+
+
+exiting:
+
+- 3700send should exit once it knows its data has been succesffuly delivered
+- 3700recv should not exit on its own volition. sim will kill it
+
+
+test using
+
+$ ./run <config-file>
+
+
+
+gracefully handle errors:
+- never print out incorrect data
+- will encounter 
+  - lost packets, duplicate packets, corrupted packets, delayed packets
+  - high and low bandwidth, high and low latency, high and low jitter
