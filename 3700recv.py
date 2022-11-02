@@ -3,9 +3,8 @@
 import argparse, socket, time, json, select, struct, sys, math
 
 class Receiver:
-    all = {}
     acked = {}
-    seqn_to_print = 1  # keeps track of which packet to print next
+    seqn_to_print = 0  # keeps track of which packet to print next
 
     def __init__(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -51,14 +50,12 @@ class Receiver:
                 msg = json.loads(data.decode('utf-8'))
                 self.log("Received data message %s" % msg)
                 seqnum = msg["seqnum"] 
-                self.all[seqnum] = msg # necessary?
 
                 self.send_ack(msg, seqnum) # ack no matter if in order or not
 
                 # if in order, recursive print
                 if seqnum == self.seqn_to_print:
                     self.print_recursive(msg)
-                # else: # else, add to to_print
                     
         return
 

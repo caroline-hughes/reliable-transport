@@ -11,6 +11,7 @@ class Sender:
     # seqnum -> time sent
     awaiting_ack = {}
 
+    # seqnum -> msg
     packs = {}
 
     next_seqn = 0  # what we give a new packet thats being sent
@@ -56,7 +57,7 @@ class Sender:
 
             socks = select.select(sockets, [], [], 0.1)[0]
 
-            self.check_timeouts()
+            self.check_timeouts() # check if any packs weve sent have timed out 
 
             for conn in socks:
                 if conn == self.socket:
@@ -100,10 +101,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
     sender = Sender(args.host, args.port)
     sender.run()
-
-
-    # def got_all_acks(self, acks, seqnum):
-    #     for i in range(seqnum):
-    #         if acks[i] != 1:
-    #             return False
-    #     return True
