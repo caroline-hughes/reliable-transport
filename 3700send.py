@@ -1,6 +1,7 @@
 #!/usr/bin/env -S python3 -u
 
-import argparse, socket, time, json, select, struct, sys, math, datetime
+import argparse, socket, time, json, select, struct, sys, math, datetime, zlib
+from json import JSONDecodeError
 from re import L
 
 DATA_SIZE = 1375
@@ -64,18 +65,22 @@ class Sender:
                     # check if its been over a sec waiting for any youve sent
 
                     k, addr = conn.recvfrom(65535) # get an ack
-                    msg = json.loads(k.decode('utf-8'))
-                    self.log("Received message '%s'" % msg)
-                    acked_seqnum = msg["seqnum"]
 
-                    self.log("got ack for '%s'" % acked_seqnum)
-                    self.awaiting_ack.pop(acked_seqnum)
+                    try:
+                        msg = json.loads(k.decode('utf-8'))
+                        self.log("Received message '%s'" % msg)
+                        acked_seqnum = msg["seqnum"]
 
-                    if self.curr_acks == WINDOW_SIZE - 1:
-                        self.waiting = False # done waiting
-                        self.curr_acks = 0
-                    else:
-                        self.curr_acks += 1
+                        self.log("got ack for '%s'" % acked_seqnum)
+                        self.awaiting_ack.pop(acked_seqnum)
+
+                        if self.curr_acks == WINDOW_SIZE - 1:
+                            self.waiting = False # done waiting
+                            self.curr_acks = 0
+                        else:
+                            self.curr_acks += 1
+                    except JSONDecodeError:
+                        self.log("JSON PACKAGE CORRUPTED ON SENDER SIDE")
 
                 elif conn == sys.stdin: # read more data from stdin
                     for n in range(WINDOW_SIZE):
@@ -85,7 +90,10 @@ class Sender:
                             self.log("All done!")
                             sys.exit(0)
 
-                        msg = { "type": "msg", "seqnum": self.next_seqn, "data": data}
+                        encoded_data = data.encode()
+                        checksum = zlib.crc32(encoded_data)
+
+                        msg = { "type": "msg", "seqnum": self.next_seqn, "checksum": checksum, "data": data}
                         self.log("Sending message '%s'" % msg)
                         self.send(msg)
                         self.awaiting_ack[self.next_seqn] = time.time()

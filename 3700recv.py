@@ -1,6 +1,8 @@
 #!/usr/bin/env -S python3 -u
 
-import argparse, socket, time, json, select, struct, sys, math
+import argparse, socket, time, json, select, struct, sys, math, zlib
+from json import JSONDecodeError
+
 
 class Receiver:
     acked = {}
@@ -47,15 +49,23 @@ class Receiver:
                     self.remote_host = addr[0]
                     self.remote_port = addr[1]
 
-                msg = json.loads(data.decode('utf-8'))
-                self.log("Received data message %s" % msg)
-                seqnum = msg["seqnum"] 
+                try:
+                    msg = json.loads(data.decode('utf-8'))
+                    self.log("Received data message %s" % msg)
+                    seqnum = msg["seqnum"]
+                    checksum = msg["checksum"]
+                    data_checksum = zlib.crc32(msg["data"].encode())
+                    if checksum != data_checksum:
+                        self.log("DATA WAS CORRUPTED %s" % seqnum)
+                    else:
 
-                self.send_ack(msg, seqnum) # ack no matter if in order or not
+                        self.send_ack(msg, seqnum) # ack no matter if in order or not
 
-                # if in order, recursive print
-                if seqnum == self.seqn_to_print:
-                    self.print_recursive(msg)
+                        # if in order, recursive print
+                        if seqnum == self.seqn_to_print:
+                            self.print_recursive(msg)
+                except JSONDecodeError:
+                    self.log("JSON PACKAGE CORRUPTED ON RECEIVER SIDE")
                     
         return
 
