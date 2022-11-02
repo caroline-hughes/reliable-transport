@@ -3,10 +3,9 @@
 import argparse, socket, time, json, select, struct, sys, math
 
 class Receiver:
-    # dict mapping seqnum -> msg
-    stored_data = {}
-    expected_seqnum = 1
-    seen = []
+    all = {}
+    acked = {}
+    seqn_to_print = 1  # keeps track of which packet to print next
 
     def __init__(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -26,17 +25,16 @@ class Receiver:
 
     def send_ack(self, msg, seqnum):
         self.log('sending ack for seqn %s' % seqnum)
-        print(msg["data"], end='', flush=True) 
         self.send({ "type": "ack", "seqnum": seqnum }) 
-        # self.seen.append(seqnum) 
+        self.acked[seqnum] = msg
 
-    def check_next_ack(self):
-        # next_ack = self.stored_data.get(self.expected_seqnum)
-        # if next_ack is not None:
-        #     self.send_ack(next_ack, self.expected_seqnum)
-        #     self.expected_seqnum += 1 # increment
-        #     self.check_next_ack() # call recursive check for next acks 
-        # else:
+    def print_recursive(self, msg):
+        print(msg["data"], end='', flush=True)
+        self.seqn_to_print += 1
+        # check if next is in to_print: weve already acked it but havent yet printed
+        next_to_print = self.acked.get(self.seqn_to_print)
+        if next_to_print is not None:
+            self.print_recursive(next_to_print)
         return
 
     def run(self):
@@ -52,30 +50,15 @@ class Receiver:
 
                 msg = json.loads(data.decode('utf-8'))
                 self.log("Received data message %s" % msg)
+                seqnum = msg["seqnum"] 
+                self.all[seqnum] = msg # necessary?
 
-                seqnum = msg["seqnum"] # get packet seq number
-                curr_try = msg["try"]
-                
-                self.log("expected next packet for %s \n" % str(self.expected_seqnum))
-                # check if we've gotten a version of this packet before
-                existing = self.stored_data.get(seqnum)
-                if existing is not None: # got a duplicate
-                    if seqnum < self.expected_seqnum:
-                        self.log("got duplicate packet %s \n" % str(seqnum))
-                        if curr_try > existing["try"]: # its a retransmission, ack it
-                            self.log("but its a newer version \n")
-                            self.send_ack(msg, seqnum)
-                            self.expected_seqnum = seqnum + 1   # reset expected
-                elif seqnum == self.expected_seqnum: # got the next expected
-                        self.send_ack(msg, seqnum)
-                        self.expected_seqnum += 1 # increment
-                        self.check_next_ack()
-                else: # got an out of order ack
-                    self.log("got out of order packet %s \n" % str(seqnum))
-                    # ack???
-                
-                # save the datagram to the dict
-                self.stored_data[seqnum] = msg
+                self.send_ack(msg, seqnum) # ack no matter if in order or not
+
+                # if in order, recursive print
+                if seqnum == self.seqn_to_print:
+                    self.print_recursive(msg)
+                # else: # else, add to to_print
                     
         return
 

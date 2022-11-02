@@ -9,13 +9,12 @@ WINDOW_SIZE = 4
 class Sender:
 
     # seqnum -> time sent
-    sent = {}
+    awaiting_ack = {}
 
-    # seqnum -> msg
     packs = {}
 
-    # seqnum -> bool
-    acked = {}
+    next_seqn = 0  # what we give a new packet thats being sent
+    curr_acks = 0  # for window
 
     def __init__(self, host, port):
         self.host = host
@@ -32,31 +31,32 @@ class Sender:
     def send(self, message):
         self.socket.sendto(json.dumps(message).encode('utf-8'), (self.host, self.remote_port))
 
-    # def got_all_acks(self, acks, seqnum):
-    #     for i in range(seqnum):
-    #         if acks[i] != 1:
-    #             return False
-    #     return True
+    def check_timeouts(self):
+        for k in self.awaiting_ack.keys():
+            now = time.time()
+            diff = now - self.awaiting_ack.get(k)
+            # self.log("FOR KEY: %s" % k)
+            # self.log("TIME DIFF: %s" % str(diff))
+            if diff > 2:
+                self.log("FOR KEY: %s" % k)
+                self.log("TIME DIFF: %s" % str(diff))
+                self.retransmit(k)
 
+    def retransmit(self, k):
+        self.log("RETRANSMITTING seqnum '%s'" % str(k))
+        msg = self.packs.get(k)
+        self.send(msg)
+        self.awaiting_ack[k] = time.time()
+        return
+        
     def run(self):
-        seqnum = 1
-        expected_ack_seqnum = 1
-        curr_acks = 0
-
+        
         while True:
             sockets = [self.socket, sys.stdin] if not self.waiting else [self.socket]
 
             socks = select.select(sockets, [], [], 0.1)[0]
 
-            for k in self.sent.keys():
-                now = time.time()
-                diff = now - self.sent.get(k)
-                #self.log("FOR KEY: %s" % k)
-                #self.log("TIME DIFF: %s" % str(diff))
-                if diff > 2:
-                    self.log("FOR KEY: %s" % k)
-                    self.log("TIME DIFF: %s" % str(diff))
-                    self.retransmit(k)
+            self.check_timeouts()
 
             for conn in socks:
                 if conn == self.socket:
@@ -65,49 +65,33 @@ class Sender:
                     k, addr = conn.recvfrom(65535) # get an ack
                     msg = json.loads(k.decode('utf-8'))
                     self.log("Received message '%s'" % msg)
-                    the_seqnum = msg["seqnum"]
+                    acked_seqnum = msg["seqnum"]
 
-                    if the_seqnum == expected_ack_seqnum:
-                        self.log("got expected seqnum '%s'" % the_seqnum)
-                        self.sent.pop(the_seqnum)
-                        expected_ack_seqnum += 1
-                        if curr_acks == WINDOW_SIZE - 1:
-                            self.waiting = False # done waiting
-                            curr_acks = 0
-                        else:
-                            curr_acks += 1
-                    
+                    self.log("got ack for '%s'" % acked_seqnum)
+                    self.awaiting_ack.pop(acked_seqnum)
+
+                    if self.curr_acks == WINDOW_SIZE - 1:
+                        self.waiting = False # done waiting
+                        self.curr_acks = 0
                     else:
-                        self.log("got out of order seqnum '%s'" % the_seqnum)
-
+                        self.curr_acks += 1
 
                 elif conn == sys.stdin: # read more data from stdin
                     for n in range(WINDOW_SIZE):
                         data = sys.stdin.read(DATA_SIZE)
                         
-                        if len(data) == 0:
+                        if len(data) == 0 and (len(self.awaiting_ack) == 0):
                             self.log("All done!")
                             sys.exit(0)
 
-                        msg = { "type": "msg", "seqnum": seqnum, "try":  1, "data": data}
+                        msg = { "type": "msg", "seqnum": self.next_seqn, "data": data}
                         self.log("Sending message '%s'" % msg)
                         self.send(msg)
-                        self.sent[seqnum] = time.time()
-                        self.packs[seqnum] = msg
-                        seqnum += 1
+                        self.awaiting_ack[self.next_seqn] = time.time()
+                        self.packs[self.next_seqn] = msg
+                        self.next_seqn += 1
 
                     self.waiting = True
-
-        return
-    
-    def retransmit(self, k):
-        self.log("lost packet. RETRANSMITTING")
-        # self.log("Retransmitting seqnum '%s'" % str(k))
-        msg = self.packs.get(k)
-        msg["try"] = msg["try"] + 1
-        self.send(msg)
-        self.sent[k] = time.time()
-        return
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='send data')
@@ -116,3 +100,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
     sender = Sender(args.host, args.port)
     sender.run()
+
+
+    # def got_all_acks(self, acks, seqnum):
+    #     for i in range(seqnum):
+    #         if acks[i] != 1:
+    #             return False
+    #     return True
