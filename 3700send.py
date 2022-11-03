@@ -7,6 +7,8 @@ from re import L
 DATA_SIZE = 1375
 WINDOW_SIZE = 4
 
+
+
 class Sender:
 
     # seqnum -> time sent
@@ -17,6 +19,11 @@ class Sender:
 
     next_seqn = 0  # what we give a new packet thats being sent
     curr_acks = 0  # for window
+
+    cwnd = 4
+    current_window = 4
+    ssthresh = 100
+    packet_dropped = False
 
     def __init__(self, host, port):
         self.host = host
@@ -49,6 +56,8 @@ class Sender:
         msg = self.packs.get(k)
         self.send(msg)
         self.awaiting_ack[k] = time.time()
+        self.packet_dropped = True
+
         return
         
     def run(self):
@@ -68,22 +77,39 @@ class Sender:
 
                     try:
                         msg = json.loads(k.decode('utf-8'))
-                        self.log("Received message '%s'" % msg)
                         acked_seqnum = msg["seqnum"]
-
                         self.log("got ack for '%s'" % acked_seqnum)
-                        self.awaiting_ack.pop(acked_seqnum)
+                        if acked_seqnum in self.awaiting_ack:
+                            self.awaiting_ack.pop(acked_seqnum)
+                            self.log("Received message '%s'" % msg)
 
-                        if self.curr_acks == WINDOW_SIZE - 1:
-                            self.waiting = False # done waiting
-                            self.curr_acks = 0
-                        else:
-                            self.curr_acks += 1
+                            if self.cwnd < self.ssthresh:
+                                self.cwnd = self.cwnd + 1
+                                self.log("CWND: %s" % self.cwnd)
+                            else:
+                                self.cwnd = self.cwnd + 1/self.cwnd
+                                self.log("CWND: %s" % self.cwnd)
+
+                            if self.curr_acks == self.current_window - 1:
+                                self.waiting = False # done waiting
+                                self.curr_acks = 0
+
+                                if self.packet_dropped:
+                                    self.cwnd = 1
+                                    self.thresh = self.cwnd/2;
+                                    self.packet_dropped = False
+
+                                self.current_window = self.cwnd
+                                self.log("CURRENT WINDOW: %s" % self.current_window)
+
+                            else:
+                                self.curr_acks += 1
+
                     except JSONDecodeError:
                         self.log("JSON PACKAGE CORRUPTED ON SENDER SIDE")
 
                 elif conn == sys.stdin: # read more data from stdin
-                    for n in range(WINDOW_SIZE):
+                    for n in range(int(self.current_window)):
                         data = sys.stdin.read(DATA_SIZE)
                         
                         if len(data) == 0 and (len(self.awaiting_ack) == 0):

@@ -53,6 +53,7 @@ class Receiver:
                     msg = json.loads(data.decode('utf-8'))
                     self.log("Received data message %s" % msg)
                     seqnum = msg["seqnum"]
+
                     checksum = msg["checksum"]
                     data_checksum = zlib.crc32(msg["data"].encode())
                     if checksum != data_checksum:
