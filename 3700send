@@ -13,7 +13,9 @@ class Sender:
 
     # seqnum -> time sent
     awaiting_ack = {}
-    rtt_estimation = 0.1   # base rtt: 1 sec
+    rtt_estimation = -1.0 # rtt will be set to the rtt of first sample
+
+    retransmitted = {}
 
     # seqnum -> msg
     packs = {}
@@ -45,7 +47,11 @@ class Sender:
         for k in self.awaiting_ack.keys():
             now = time.time()
             diff = now - self.awaiting_ack.get(k)
-            retransmission_threshold = 2.0 * self.rtt_estimation
+
+            if self.rtt_estimation == -1.0:
+                retransmission_threshold = 2.0
+            else: 
+                retransmission_threshold = 2.0 * self.rtt_estimation
             # self.log("FOR KEY: %s" % k)
             # self.log("TIME DIFF: %s" % str(diff))
             if diff > retransmission_threshold:
@@ -55,6 +61,7 @@ class Sender:
 
     def retransmit(self, k):
         self.log("RETRANSMITTING seqnum '%s'" % str(k))
+        self.retransmitted[k] = 1
         msg = self.packs.get(k)
         self.send(msg)
         self.awaiting_ack[k] = time.time()
@@ -82,24 +89,32 @@ class Sender:
                         acked_seqnum = msg["seqnum"]
                         self.log("got ack for '%s'" % acked_seqnum)
                         if acked_seqnum in self.awaiting_ack:
+                            self.log("Received message '%s'" % msg)
 
-                            now = time.time()
-                            packet_rtt = now - self.awaiting_ack.get(acked_seqnum)
-                            # adjust moving average for rtt estimation based on this ack
-                            new_rtt = (ALPHA * self.rtt_estimation) + ((1 - ALPHA) * packet_rtt)
-                            self.log("NEW RTT EST '%s'" % new_rtt)
-                            self.rtt_estimation = new_rtt
+                            if acked_seqnum not in self.retransmitted:
+                                # now = time.time()
+                                packet_rtt = time.time() - (self.awaiting_ack.get(acked_seqnum) * 1.0)
+                                if self.rtt_estimation == -1.0:
+                                    self.log("SET RTT '%s'" % packet_rtt)
+                                    self.rtt_estimation = packet_rtt
+                                else:
+                                    # adjust moving average for rtt estimation based on this ack
+                                    new_rtt = (ALPHA * self.rtt_estimation) + ((1 - ALPHA) * packet_rtt)
+                                    self.log("updating RTT estimation '%s'" % new_rtt)
+                                    self.rtt_estimation = new_rtt
+                            else:
+                                self.log("not adjusting RTT b/c was retransmission")
 
 
                             self.awaiting_ack.pop(acked_seqnum)
-                            self.log("Received message '%s'" % msg)
+                            
 
                             if self.cwnd < self.ssthresh:
                                 self.cwnd = self.cwnd + 1
-                                self.log("CWND: %s" % self.cwnd)
+                                #self.log("CWND: %s" % self.cwnd)
                             else:
                                 self.cwnd = self.cwnd + 1/self.cwnd
-                                self.log("CWND: %s" % self.cwnd)
+                                #self.log("CWND: %s" % self.cwnd)
 
                             if self.curr_acks == self.current_window - 1:
                                 self.waiting = False # done waiting
@@ -111,7 +126,7 @@ class Sender:
                                     self.packet_dropped = False
 
                                 self.current_window = self.cwnd
-                                self.log("CURRENT WINDOW: %s" % self.current_window)
+                                #self.log("CURRENT WINDOW: %s" % self.current_window)
 
                             else:
                                 self.curr_acks += 1
