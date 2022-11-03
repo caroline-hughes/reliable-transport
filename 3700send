@@ -6,13 +6,14 @@ from re import L
 
 DATA_SIZE = 1375
 WINDOW_SIZE = 4
-
+ALPHA = 0.875
 
 
 class Sender:
 
     # seqnum -> time sent
     awaiting_ack = {}
+    rtt_estimation = 0.1   # base rtt: 1 sec
 
     # seqnum -> msg
     packs = {}
@@ -44,9 +45,10 @@ class Sender:
         for k in self.awaiting_ack.keys():
             now = time.time()
             diff = now - self.awaiting_ack.get(k)
+            retransmission_threshold = 2.0 * self.rtt_estimation
             # self.log("FOR KEY: %s" % k)
             # self.log("TIME DIFF: %s" % str(diff))
-            if diff > 2:
+            if diff > retransmission_threshold:
                 self.log("FOR KEY: %s" % k)
                 self.log("TIME DIFF: %s" % str(diff))
                 self.retransmit(k)
@@ -80,6 +82,15 @@ class Sender:
                         acked_seqnum = msg["seqnum"]
                         self.log("got ack for '%s'" % acked_seqnum)
                         if acked_seqnum in self.awaiting_ack:
+
+                            now = time.time()
+                            packet_rtt = now - self.awaiting_ack.get(acked_seqnum)
+                            # adjust moving average for rtt estimation based on this ack
+                            new_rtt = (ALPHA * self.rtt_estimation) + ((1 - ALPHA) * packet_rtt)
+                            self.log("NEW RTT EST '%s'" % new_rtt)
+                            self.rtt_estimation = new_rtt
+
+
                             self.awaiting_ack.pop(acked_seqnum)
                             self.log("Received message '%s'" % msg)
 
