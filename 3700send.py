@@ -20,7 +20,7 @@ class Sender:
     next_seqn = 0  # what we give a new packet thats being sent
     curr_acks = 0  # for window
 
-    cwnd = 4
+    cwnd = 1
     current_window = 4
     ssthresh = 100
     packet_dropped = False
@@ -95,8 +95,8 @@ class Sender:
                                 self.curr_acks = 0
 
                                 if self.packet_dropped:
+                                    #self.ssthresh = self.cwnd/2;
                                     self.cwnd = 1
-                                    self.thresh = self.cwnd/2;
                                     self.packet_dropped = False
 
                                 self.current_window = self.cwnd
