@@ -1,11 +1,11 @@
 #!/usr/bin/env -S python3 -u
 
-import argparse, socket, time, json, select, struct, sys, math, zlib
+import argparse, socket, json, select, sys, zlib
 from json import JSONDecodeError
 
 
 class Receiver:
-    acked = {}
+    acked = {} # dict of packets we've acked: sequence numbers -> msg
     seqn_to_print = 0  # keeps track of which packet to print next
 
     def __init__(self):
@@ -24,16 +24,19 @@ class Receiver:
         sys.stderr.write(message + "\n")
         sys.stderr.flush()
 
+    # send ack and add ack to dict
     def send_ack(self, msg, seqnum):
-        self.log('sending ack for seqn %s' % seqnum)
+        # self.log('sending ack for seqn %s' % seqnum)
         self.send({ "type": "ack", "seqnum": seqnum }) 
         self.acked[seqnum] = msg
 
+    # print the given message, and check acked dictionary to see if subsequent packets
+    # we've already acked can also be printed
     def print_recursive(self, msg):
         print(msg["data"], end='', flush=True)
         self.seqn_to_print += 1
-        # check if next is in to_print: weve already acked it but havent yet printed
         next_to_print = self.acked.get(self.seqn_to_print)
+
         if next_to_print is not None:
             self.print_recursive(next_to_print)
         return
@@ -59,16 +62,11 @@ class Receiver:
                     if checksum != data_checksum:
                         self.log("DATA WAS CORRUPTED %s" % seqnum)
                     else:
-
-                        self.send_ack(msg, seqnum) # ack no matter if in order or not
-
-                        # if in order, recursive print
-                        if seqnum == self.seqn_to_print:
+                        self.send_ack(msg, seqnum)
+                        if seqnum == self.seqn_to_print: # print if next in-order packet
                             self.print_recursive(msg)
                 except JSONDecodeError:
                     self.log("JSON PACKAGE CORRUPTED ON RECEIVER SIDE")
-                    
-        return
 
 
 if __name__ == "__main__":
