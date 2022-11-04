@@ -1,31 +1,21 @@
 #!/usr/bin/env -S python3 -u
 
-import argparse, socket, time, json, select, struct, sys, math, datetime, zlib
+import argparse, socket, time, json, select, sys, zlib
 from json import JSONDecodeError
-from re import L
 
 DATA_SIZE = 1375
-WINDOW_SIZE = 4
 ALPHA = 0.875
 
-
 class Sender:
+    awaiting_ack = {} # dict of seqnum -> time sent
+    packs = {} # dict of seqnum -> msg
 
-    # seqnum -> time sent
-    awaiting_ack = {}
-    rtt_estimation = -1.0 # rtt will be set to the rtt of first sample
-
-    retransmitted = {}
-
-    # seqnum -> msg
-    packs = {}
-
-    next_seqn = 0  # what we give a new packet thats being sent
-    curr_acks = 0  # for window
+    rtt_estimation = -1.0 # round trip time estimation, will be set to the rtt of first sample
+    next_seqn = 0  # incremented with each sent packet which was not a retransmit
+    curr_acks = 0  # how many acks we've recieved for those sent in most recent window: [0, current_window]
 
     cwnd = 1
     current_window = 4
-    ssthresh = 100
     packet_dropped = False
 
     def __init__(self, host, port):
@@ -43,31 +33,44 @@ class Sender:
     def send(self, message):
         self.socket.sendto(json.dumps(message).encode('utf-8'), (self.host, self.remote_port))
 
+    # decide whether a packet needs to be retransmitted based on the estimated round trip time
     def check_timeouts(self):
         for k in self.awaiting_ack.keys():
             now = time.time()
             diff = now - self.awaiting_ack.get(k)
-
+             
             if self.rtt_estimation == -1.0:
-                retransmission_threshold = 2.0
-            else: 
-                retransmission_threshold = 2.0 * self.rtt_estimation
-            # self.log("FOR KEY: %s" % k)
-            # self.log("TIME DIFF: %s" % str(diff))
+                retransmission_threshold = 2
+            else:
+                retransmission_threshold = 1.85 * self.rtt_estimation
             if diff > retransmission_threshold:
                 self.log("FOR KEY: %s" % k)
                 self.log("TIME DIFF: %s" % str(diff))
                 self.retransmit(k)
 
-    def retransmit(self, k):
-        self.log("RETRANSMITTING seqnum '%s'" % str(k))
-        self.retransmitted[k] = 1
-        msg = self.packs.get(k)
-        self.send(msg)
-        self.awaiting_ack[k] = time.time()
+    # retransmit the packet associated with the given seqn
+    def retransmit(self, seqn):
+        self.log("RETRANSMITTING seqnum '%s'" % str(seqn))
+        self.send(self.packs.get(seqn))
+        self.awaiting_ack[seqn] = time.time()
         self.packet_dropped = True
-
         return
+
+    # perform congestion control and reset waiting flag if got all acks
+    def adjust_window(self):
+        self.cwnd = self.cwnd + 1 
+        if self.curr_acks == self.current_window - 1:
+            self.waiting = False
+            self.curr_acks = 0
+
+            if self.packet_dropped:
+                self.cwnd = 1
+                self.packet_dropped = False
+
+            self.current_window = self.cwnd
+
+        else:
+            self.curr_acks += 1
         
     def run(self):
         
@@ -76,65 +79,36 @@ class Sender:
 
             socks = select.select(sockets, [], [], 0.1)[0]
 
-            self.check_timeouts() # check if any packs weve sent have timed out 
+            # check for packet timeouts
+            self.check_timeouts()
 
             for conn in socks:
                 if conn == self.socket:
-                    # check if its been over a sec waiting for any youve sent
-
-                    k, addr = conn.recvfrom(65535) # get an ack
+                    k, addr = conn.recvfrom(65535)
 
                     try:
                         msg = json.loads(k.decode('utf-8'))
                         acked_seqnum = msg["seqnum"]
-                        self.log("got ack for '%s'" % acked_seqnum)
+
                         if acked_seqnum in self.awaiting_ack:
                             self.log("Received message '%s'" % msg)
-
-                            if acked_seqnum not in self.retransmitted:
-                                # now = time.time()
-                                packet_rtt = time.time() - (self.awaiting_ack.get(acked_seqnum) * 1.0)
-                                if self.rtt_estimation == -1.0:
-                                    self.log("SET RTT '%s'" % packet_rtt)
-                                    self.rtt_estimation = packet_rtt
-                                else:
-                                    # adjust moving average for rtt estimation based on this ack
-                                    new_rtt = (ALPHA * self.rtt_estimation) + ((1 - ALPHA) * packet_rtt)
-                                    self.log("updating RTT estimation '%s'" % new_rtt)
-                                    self.rtt_estimation = new_rtt
-                            else:
-                                self.log("not adjusting RTT b/c was retransmission")
-
-
-                            self.awaiting_ack.pop(acked_seqnum)
                             
+                            # rtt of the packet which was acked
+                            packet_rtt = time.time() - self.awaiting_ack.get(acked_seqnum)
 
-                            if self.cwnd < self.ssthresh:
-                                self.cwnd = self.cwnd + 1
-                                #self.log("CWND: %s" % self.cwnd)
-                            else:
-                                self.cwnd = self.cwnd + 1/self.cwnd
-                                #self.log("CWND: %s" % self.cwnd)
+                            # if rtt_estimation needs to be initialized to first sample
+                            if self.rtt_estimation == -1.0:
+                                self.rtt_estimation = packet_rtt
+                            else: # else adjust moving average based on this sample
+                                self.rtt_estimation = (ALPHA * self.rtt_estimation) + ((1 - ALPHA) * packet_rtt)
 
-                            if self.curr_acks == self.current_window - 1:
-                                self.waiting = False # done waiting
-                                self.curr_acks = 0
-
-                                if self.packet_dropped:
-                                    #self.ssthresh = self.cwnd/2;
-                                    self.cwnd = 1
-                                    self.packet_dropped = False
-
-                                self.current_window = self.cwnd
-                                #self.log("CURRENT WINDOW: %s" % self.current_window)
-
-                            else:
-                                self.curr_acks += 1
+                            self.awaiting_ack.pop(acked_seqnum) 
+                            self.adjust_window()
 
                     except JSONDecodeError:
                         self.log("JSON PACKAGE CORRUPTED ON SENDER SIDE")
 
-                elif conn == sys.stdin: # read more data from stdin
+                elif conn == sys.stdin:
                     for n in range(int(self.current_window)):
                         data = sys.stdin.read(DATA_SIZE)
                         
@@ -148,10 +122,11 @@ class Sender:
                         msg = { "type": "msg", "seqnum": self.next_seqn, "checksum": checksum, "data": data}
                         self.log("Sending message '%s'" % msg)
                         self.send(msg)
-                        self.awaiting_ack[self.next_seqn] = time.time()
-                        self.packs[self.next_seqn] = msg
-                        self.next_seqn += 1
-
+                        self.awaiting_ack[self.next_seqn] = time.time() # store the time we sent this packet
+                        self.packs[self.next_seqn] = msg  # store the message associated with this sequence number
+                        self.next_seqn += 1  # increment sequence number to be assigned to next packet
+                    
+                    # after sending current_window packets, wait for acks
                     self.waiting = True
 
 if __name__ == "__main__":
